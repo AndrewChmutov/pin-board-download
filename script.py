@@ -1,5 +1,6 @@
 # Default libraries
 import json
+import time
 
 # For browsing
 import selenium
@@ -37,3 +38,48 @@ password_field.send_keys(info['pass'])
 # Click login button again
 login_button = driver.find_element(By.CLASS_NAME, 'SignupButton')
 login_button.click()
+
+
+# Prepare for main loop
+new_img_not_met = 0 # stopping flag
+urls = set()        # store urls that already downloaded for avoid duplication
+i = 0               # counter for debug information
+
+# main loop
+while True:
+    # Get all images available
+    images = driver.find_elements(By.CSS_SELECTOR, 'img[srcset]')
+
+    # Process every image found
+    for img in images:
+        
+        # Take the best resolution for a picture.
+        try:
+            attribute = img.get_attribute('srcset')
+            if (len(attribute.split(',')) == 1):
+                # Remove ' 4x' substring
+                current_url = attribute.split()[0]
+            else:
+                # In case other versions exist
+                current_url = img.get_attribute('srcset').split(',')[-1].split()[0]
+        except:
+            continue
+
+
+        # If there was no such urls met
+        if current_url not in urls:
+            new_img_not_met = 0
+
+            # Scroll to that image
+            driver.execute_script('arguments[0].scrollIntoView({block: "center", behavior: "smooth"});', img)
+
+            # Add to the set
+            urls.add(url)
+
+        else:
+            # if no image met, we increment the counter
+            # for stopping condition
+            new_img_not_met += 1
+
+    if new_img_not_met > 10:
+        break
