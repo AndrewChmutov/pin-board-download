@@ -9,7 +9,7 @@ from selenium import webdriver
 from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.by import By
-
+import urllib.request
 
 url = input("Enter the url of Pinterest board: ")
 
@@ -59,6 +59,10 @@ i = 0               # counter for debug information
 if ("downloads.txt" in os.listdir(img_directory)):
     with open(f"{img_directory}/downloads.txt") as downloaded_list_file:
         urls = set([line[:-1].rstrip() for line in downloaded_list_file])
+
+
+time.sleep(10)
+
 # main loop
 while True:
     # Get all images available
@@ -94,6 +98,10 @@ while True:
             
             print(f'{i} - {current_url}')
             i += 1
+
+            filename = current_url.split('/')[-1]
+            urllib.request.urlretrieve(current_url, img_directory + '/' + filename)
+            time.sleep(1)
 
         else:
             # if no image met, we increment the counter
