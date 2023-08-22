@@ -24,7 +24,7 @@ except:
 # Firefox driver
 driver_path = './geckodriver'
 driver = webdriver.Firefox(
-    service=Service(driver_path),
+    service=Service(driver_path, log_output='geckodriver.log'),
     options=Options()
 )
 
@@ -56,9 +56,8 @@ i = 0               # counter for debug information
 
 # if the directory already existed and there are already
 # downloaded pictures, no need to redownloaded them again
-if ("downloads.txt" in os.listdir(img_directory)):
-    with open(f"{img_directory}/downloads.txt") as downloaded_list_file:
-        urls = set([line[:-1].rstrip() for line in downloaded_list_file])
+downloaded = os.listdir(img_directory)
+downloaded = set(downloaded)
 
 
 time.sleep(10)
@@ -87,26 +86,26 @@ while True:
         # If there was no such urls met
         if current_url not in urls:
             new_img_not_met = 0
+            urls.add(current_url)
 
             # Scroll to that image
             driver.execute_script('arguments[0].scrollIntoView({block: "center", behavior: "smooth"});', img)
 
-            # Add to the set
-            urls.add(current_url)
-            with open(f'{img_directory}/downloads.txt', 'a') as downloads:
-                downloads.write(f'{current_url}\n')
-            
-            print(f'{i} - {current_url}')
-            i += 1
-
             filename = current_url.split('/')[-1]
-            urllib.request.urlretrieve(current_url, img_directory + '/' + filename)
-            time.sleep(1)
+
+            if (filename not in downloaded):
+                print(f'{i} - {current_url}')
+                i += 1
+                downloaded.add(filename)
+
+                urllib.request.urlretrieve(current_url, img_directory + '/' + filename)
 
         else:
             # if no image met, we increment the counter
             # for stopping condition
             new_img_not_met += 1
+        
+        time.sleep(1)
 
     if new_img_not_met > 10:
         break
