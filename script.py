@@ -1,6 +1,7 @@
 # Default libraries
 import json
 import time
+import os
 
 # For browsing
 import selenium
@@ -11,6 +12,14 @@ from selenium.webdriver.common.by import By
 
 
 url = input("Enter the url of Pinterest board: ")
+
+# Add a directory
+img_directory = input('Enter new or existing directory for images: ')
+try:
+    os.mkdir(img_directory)
+    print('Creating new directory for pictures.')
+except:
+    print('Adding pictures to existing directory')
 
 # Firefox driver
 driver_path = './geckodriver'
@@ -45,6 +54,11 @@ new_img_not_met = 0 # stopping flag
 urls = set()        # store urls that already downloaded for avoid duplication
 i = 0               # counter for debug information
 
+# if the directory already existed and there are already
+# downloaded pictures, no need to redownloaded them again
+if ("downloads.txt" in os.listdir(img_directory)):
+    with open(f"{img_directory}/downloads.txt") as downloaded_list_file:
+        urls = set([line[:-1].rstrip() for line in downloaded_list_file])
 # main loop
 while True:
     # Get all images available
@@ -74,7 +88,12 @@ while True:
             driver.execute_script('arguments[0].scrollIntoView({block: "center", behavior: "smooth"});', img)
 
             # Add to the set
-            urls.add(url)
+            urls.add(current_url)
+            with open(f'{img_directory}/downloads.txt', 'a') as downloads:
+                downloads.write(f'{current_url}\n')
+            
+            print(f'{i} - {current_url}')
+            i += 1
 
         else:
             # if no image met, we increment the counter
@@ -83,3 +102,5 @@ while True:
 
     if new_img_not_met > 10:
         break
+
+print('Done!')
