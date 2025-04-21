@@ -25,9 +25,8 @@ enum CreationError {
     #[error("Something went wrong during fetching data")]
     ApiError(#[from] ApiError),
     #[error("Url is incorrect")]
-    BadUrl
+    BadUrl,
 }
-
 
 #[derive(Debug)]
 struct BoardDescription {
@@ -45,11 +44,11 @@ fn decode_str(s: &str) -> Option<String> {
 impl BoardDescription {
     fn from_url(url: &str) -> Option<Self> {
         match url.split('/').collect::<Vec<_>>()[..] {
-            [.., user, name, ""] | [.., user, name]  => Some(Self {
+            [.., user, name, ""] | [.., user, name] => Some(Self {
                 user: decode_str(user).unwrap(),
                 name: decode_str(name).unwrap(),
             }),
-            _ => None
+            _ => None,
         }
     }
 }
@@ -74,7 +73,10 @@ struct PinResult {
 }
 
 impl Board {
-    async fn from_description(client: Client, description: &BoardDescription) -> Result<Self, CreationError> {
+    async fn from_description(
+        client: Client,
+        description: &BoardDescription,
+    ) -> Result<Self, CreationError> {
         let into_api_error = |e| <reqwest::Error as Into<ApiError>>::into(e);
         let board_url = Self::request_board_url(description);
 
@@ -82,28 +84,28 @@ impl Board {
             .get(board_url)
             .headers(Self::headers())
             .send()
-            .await.map_err(into_api_error)?
+            .await
+            .map_err(into_api_error)?
             .json::<serde_json::Value>()
-            .await.map_err(into_api_error)?;
+            .await
+            .map_err(into_api_error)?;
 
         let id = response
             .pointer("/resource_response/data/id")
-            .ok_or(ApiError::MissingField).unwrap()
+            .ok_or(ApiError::MissingField)
+            .unwrap()
             .as_str()
             .ok_or(ApiError::MissingField)?
             .to_string();
 
         let len = response
             .pointer("/resource_response/data/pin_count")
-            .ok_or(ApiError::MissingField).unwrap()
+            .ok_or(ApiError::MissingField)
+            .unwrap()
             .as_u64()
             .ok_or(ApiError::MissingField)? as usize;
 
-        Ok(Self {
-            client,
-            id,
-            len,
-        })
+        Ok(Self { client, id, len })
     }
 
     async fn from_url(client: Client, url: &str) -> Result<Self, CreationError> {
@@ -127,7 +129,9 @@ impl Board {
             ("Sec-Fetch-Dest", "empty"),
             ("Sec-Fetch-Mode", "cors"),
             ("Sec-Fetch-Site", "same-origin"),
-        ].into_iter() {
+        ]
+        .into_iter()
+        {
             headers.insert(key, reqwest::header::HeaderValue::from_static(value));
         }
         headers
@@ -140,7 +144,8 @@ impl Board {
                 "username": description.user,
                 "field_set_key": "detailed"
             }
-        }).to_string();
+        })
+        .to_string();
 
         Self::url_options("Board", &data)
     }
@@ -153,26 +158,30 @@ impl Board {
                 "prepend": false,
                 "bookmarks": bookmarks,
             }
-        }).to_string();
+        })
+        .to_string();
 
         Self::url_options("BoardFeed", &data)
     }
 
     fn url_options(name: &str, options: &str) -> reqwest::Url {
         reqwest::Url::parse_with_params(
-            &resource_format(name), vec![
-                ("data", options),
-                ("source_url", "")
-            ]).unwrap()
+            &resource_format(name),
+            vec![("data", options), ("source_url", "")],
+        )
+        .unwrap()
     }
 
     async fn pins(&self) -> Result<Vec<Pin>, ApiError> {
-        let PinResult { mut pins, mut bookmarks } = self.bookmark_pins(vec![]).await?;
+        let PinResult {
+            mut pins,
+            mut bookmarks,
+        } = self.bookmark_pins(vec![]).await?;
         let pb = ProgressBar::new((self.len as f32 / MAX_BOOKMARK_SIZE as f32).ceil() as u64);
         pb.set_style(
             ProgressStyle::with_template("{prefix:>12.cyan.bold} [{bar:57}] {pos}/{len}")
-            .unwrap()
-            .progress_chars("=> "),
+                .unwrap()
+                .progress_chars("=> "),
         );
         pb.set_prefix("Collecting bookmarks");
 
@@ -182,7 +191,10 @@ impl Board {
                 [s, ..] if s.starts_with("Y2JOb25lO") => break,
                 [s, ..] if s == "-end-" => break,
                 _ => {
-                    let PinResult { pins: new_pins, bookmarks: new_bookmarks } = self.bookmark_pins(bookmarks).await?;
+                    let PinResult {
+                        pins: new_pins,
+                        bookmarks: new_bookmarks,
+                    } = self.bookmark_pins(bookmarks).await?;
                     pb.inc(1);
                     pb.tick();
                     pins.extend(new_pins.into_iter());
@@ -197,17 +209,18 @@ impl Board {
 
     async fn bookmark_pins(&self, bookmarks: Vec<String>) -> Result<PinResult, ApiError> {
         let into_api_error = |e| <reqwest::Error as Into<ApiError>>::into(e);
-        let board = self.client
+        let board = self
+            .client
             // Request
             .get(self.request_pins_url(bookmarks))
             .headers(Self::headers())
             .send()
-            .await.map_err(into_api_error)?
-
+            .await
+            .map_err(into_api_error)?
             // Decode
             .json::<serde_json::Value>()
-            .await.map_err(into_api_error)?;
-
+            .await
+            .map_err(into_api_error)?;
 
         let pins_raw = board
             .pointer("/resource_response/data")
@@ -215,22 +228,26 @@ impl Board {
             .as_array()
             .ok_or(ApiError::MissingField)?;
 
-            // Images
+        // Images
         let pins = pins_raw
-            .into_iter()
-            .filter_map(|value| value.pointer("/images/orig/url")
-                .and_then(serde_json::Value::as_str)
-                .map(|s| Pin {
-                    id: value.get("id").unwrap().as_str().unwrap().to_string(),
-                    pic_url: s.to_string()
-                }))
+            .iter()
+            .filter_map(|value| {
+                value
+                    .pointer("/images/orig/url")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|s| Pin {
+                        id: value.get("id").unwrap().as_str().unwrap().to_string(),
+                        pic_url: s.to_string(),
+                    })
+            })
             .collect();
 
-        let bookmarks = board.pointer("/resource/options/bookmarks")
+        let bookmarks = board
+            .pointer("/resource/options/bookmarks")
             .ok_or(ApiError::MissingField)?
             .as_array()
             .ok_or(ApiError::MissingField)?
-            .into_iter()
+            .iter()
             .map(|value| value.as_str().unwrap().to_string())
             .collect();
 
@@ -247,13 +264,15 @@ struct Args {
 
     /// Directory where pictures should be stored
     #[arg(short, long)]
-    dir: PathBuf
+    dir: PathBuf,
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
     let Args { url, dir } = Args::parse();
-    if !dir.is_dir() { std::fs::create_dir(&dir).unwrap(); }
+    if !dir.is_dir() {
+        std::fs::create_dir(&dir).unwrap();
+    }
 
     let client = Client::new();
     let board = Board::from_url(client.clone(), &url).await.unwrap();
@@ -262,8 +281,8 @@ async fn main() {
     let pb = ProgressBar::new(pins.len() as u64);
     pb.set_style(
         ProgressStyle::with_template("{prefix:>12.cyan.bold} [{bar:57}] {pos}/{len}")
-        .unwrap()
-        .progress_chars("=> "),
+            .unwrap()
+            .progress_chars("=> "),
     );
     pb.set_prefix("Downloading pictures");
 
@@ -275,15 +294,23 @@ async fn main() {
             let pb = pb.clone();
             let dir = dir.clone();
             tokio::spawn(async move {
-                match client.get(&pic_url).send().await.and_then(|r| r.error_for_status()) {
+                match client
+                    .get(&pic_url)
+                    .send()
+                    .await
+                    .and_then(|r| r.error_for_status())
+                {
                     Ok(response) => {
-                        let [.., extension] = pic_url.as_str().split('.').collect::<Vec<_>>()[..] else {panic!("Couldn't find extension")};
+                        let [.., extension] = pic_url.as_str().split('.').collect::<Vec<_>>()[..]
+                        else {
+                            panic!("Couldn't find extension")
+                        };
                         let mut path = dir.join(id);
                         path.set_extension(extension);
                         let content = response.bytes().await.unwrap();
                         let mut file = tokio::fs::File::create(path).await.unwrap();
                         file.write_all(&content).await.unwrap();
-                    },
+                    }
                     Err(_) => pb.println(format!("Could not download image from pin: {}", id)),
                 }
                 pb.inc(1);
