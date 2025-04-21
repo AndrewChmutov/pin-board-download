@@ -1,5 +1,6 @@
-use std::path::Path;
+use std::path::PathBuf;
 
+use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::{header::HeaderMap, Client};
 use tokio::{io::AsyncWriteExt, task::JoinHandle};
@@ -237,14 +238,25 @@ impl Board {
     }
 }
 
+/// Program for Pinterest board downloading
+#[derive(clap::Parser)]
+struct Args {
+    /// Board URL
+    #[arg(short, long)]
+    url: String,
+
+    /// Directory where pictures should be stored
+    #[arg(short, long)]
+    dir: PathBuf
+}
+
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
-    let dir = Path::new("aesthetics");
-    if !dir.is_dir() { std::fs::create_dir(dir).unwrap(); }
+    let Args { url, dir } = Args::parse();
+    if !dir.is_dir() { std::fs::create_dir(&dir).unwrap(); }
 
-    let url = "https://www.pinterest.com/DrunkenWarlock/%D1%8D%D1%81%D1%82%D0%B5%D1%82%D0%B8%D0%BA%D0%B0/";
     let client = Client::new();
-    let board = Board::from_url(client.clone(), url).await.unwrap();
+    let board = Board::from_url(client.clone(), &url).await.unwrap();
     let pins = board.pins().await.unwrap();
 
     let pb = ProgressBar::new(pins.len() as u64);
@@ -261,6 +273,7 @@ async fn main() {
             let Pin { id, pic_url } = pin;
             let client = client.clone();
             let pb = pb.clone();
+            let dir = dir.clone();
             tokio::spawn(async move {
                 match client.get(&pic_url).send().await.and_then(|r| r.error_for_status()) {
                     Ok(response) => {
