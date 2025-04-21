@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 futures = "0.3.31"
+indicatif = "0.17.11"
 percent-encoding = "2.3.1"
 reqwest = { version = "0.12.15", features = ["json"] }
 serde = "1.0.219"

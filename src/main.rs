@@ -1,6 +1,8 @@
+use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::{header::HeaderMap, Client};
 
 const ROOT: &str = "https://www.pinterest.com";
+const MAX_BOOKMARK_SIZE: usize = 26;
 
 fn resource_format(resource: &str) -> String {
     format!("{ROOT}/resource/{resource}Resource/get/")
@@ -51,14 +53,23 @@ impl BoardDescription {
 #[derive(Debug)]
 struct Board {
     client: Client,
-    pub id: String,
+    id: String,
+    len: usize,
+}
+
+#[derive(Debug)]
+struct Pin {
+    id: String,
+    pic_url: String,
+}
+
+#[derive(Debug)]
+struct PinResult {
+    pins: Vec<Pin>,
+    bookmarks: Vec<String>,
 }
 
 impl Board {
-    fn from_id(client: Client, id: String) -> Self {
-        Self { client, id }
-    }
-
     async fn from_description(client: Client, description: &BoardDescription) -> Result<Self, CreationError> {
         let into_api_error = |e| <reqwest::Error as Into<ApiError>>::into(e);
         let board_url = Self::request_board_url(description);
@@ -75,10 +86,20 @@ impl Board {
             .pointer("/resource_response/data/id")
             .ok_or(ApiError::MissingField).unwrap()
             .as_str()
-            .ok_or(ApiError::MissingField)?;
+            .ok_or(ApiError::MissingField)?
+            .to_string();
 
+        let len = response
+            .pointer("/resource_response/data/pin_count")
+            .ok_or(ApiError::MissingField).unwrap()
+            .as_u64()
+            .ok_or(ApiError::MissingField)? as usize;
 
-        Ok(Self::from_id(client, id.to_string()))
+        Ok(Self {
+            client,
+            id,
+            len,
+        })
     }
 
     async fn from_url(client: Client, url: &str) -> Result<Self, CreationError> {
@@ -120,13 +141,13 @@ impl Board {
         Self::url_options("Board", &data)
     }
 
-    fn request_pins_url(&self) -> reqwest::Url {
+    fn request_pins_url(&self, bookmarks: Vec<String>) -> reqwest::Url {
         let data = serde_json::json!({
             "options": {
                 "board_id": self.id,
                 "field_set_key": "react_grid_pin",
                 "prepend": false,
-                "bookmarks": (),
+                "bookmarks": bookmarks,
             }
         }).to_string();
 
@@ -141,12 +162,40 @@ impl Board {
             ]).unwrap()
     }
 
-    async fn pins(&self) -> Result<Vec<(String, Option<String>)>, ApiError>
-    {
+    async fn pins(&self) -> Result<Vec<Pin>, ApiError> {
+        let PinResult { mut pins, mut bookmarks } = self.bookmark_pins(vec![]).await?;
+        let pb = ProgressBar::new((self.len as f32 / MAX_BOOKMARK_SIZE as f32) as u64);
+        pb.set_style(
+            ProgressStyle::with_template("{prefix:>12.cyan.bold} [{bar:57}] {pos}/{len}")
+            .unwrap()
+            .progress_chars("=> "),
+        );
+        pb.set_prefix("Collecting bookmarks");
+
+        loop {
+            match &bookmarks[..] {
+                [] => break,
+                [s, ..] if s.starts_with("Y2JOb25lO") => break,
+                [s, ..] if s == "-end-" => break,
+                _ => {
+                    let PinResult { pins: new_pins, bookmarks: new_bookmarks } = self.bookmark_pins(bookmarks).await?;
+                    pb.inc(1);
+                    pb.tick();
+                    pins.extend(new_pins.into_iter());
+                    bookmarks = new_bookmarks;
+                }
+            }
+        }
+        pb.finish_with_message("Bookmarks collected!");
+
+        Ok(pins)
+    }
+
+    async fn bookmark_pins(&self, bookmarks: Vec<String>) -> Result<PinResult, ApiError> {
         let into_api_error = |e| <reqwest::Error as Into<ApiError>>::into(e);
         let board = self.client
             // Request
-            .get(self.request_pins_url())
+            .get(self.request_pins_url(bookmarks))
             .headers(Self::headers())
             .send()
             .await.map_err(into_api_error)?
@@ -155,26 +204,33 @@ impl Board {
             .json::<serde_json::Value>()
             .await.map_err(into_api_error)?;
 
-            // Pins
-        let pins = board
+
+        let pins_raw = board
             .pointer("/resource_response/data")
             .ok_or(ApiError::MissingField)?
             .as_array()
             .ok_or(ApiError::MissingField)?;
 
             // Images
-        let r = pins
+        let pins = pins_raw
             .into_iter()
-            .map(|value| (
-                value.get("id").unwrap().as_str().unwrap().to_string(),
-                value.pointer("/images/orig/url")
+            .filter_map(|value| value.pointer("/images/orig/url")
                 .and_then(serde_json::Value::as_str)
-                .map(|s| s.to_string())
-            ))
-            .take(pins.len() - 1)
+                .map(|s| Pin {
+                    id: value.get("id").unwrap().as_str().unwrap().to_string(),
+                    pic_url: s.to_string()
+                }))
             .collect();
 
-        Ok(r)
+        let bookmarks = board.pointer("/resource/options/bookmarks")
+            .ok_or(ApiError::MissingField)?
+            .as_array()
+            .ok_or(ApiError::MissingField)?
+            .into_iter()
+            .map(|value| value.as_str().unwrap().to_string())
+            .collect();
+
+        Ok(PinResult { pins, bookmarks })
     }
 }
 
@@ -184,5 +240,4 @@ async fn main() {
     let client = Client::new();
     let board = Board::from_url(client, url).await.unwrap();
     let pins = board.pins().await.unwrap();
-    println!("{pins:?}");
 }
