@@ -1,5 +1,8 @@
+use std::path::Path;
+
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::{header::HeaderMap, Client};
+use tokio::{io::AsyncWriteExt, task::JoinHandle};
 
 const ROOT: &str = "https://www.pinterest.com";
 const MAX_BOOKMARK_SIZE: usize = 26;
@@ -164,7 +167,7 @@ impl Board {
 
     async fn pins(&self) -> Result<Vec<Pin>, ApiError> {
         let PinResult { mut pins, mut bookmarks } = self.bookmark_pins(vec![]).await?;
-        let pb = ProgressBar::new((self.len as f32 / MAX_BOOKMARK_SIZE as f32) as u64);
+        let pb = ProgressBar::new((self.len as f32 / MAX_BOOKMARK_SIZE as f32).ceil() as u64);
         pb.set_style(
             ProgressStyle::with_template("{prefix:>12.cyan.bold} [{bar:57}] {pos}/{len}")
             .unwrap()
@@ -186,7 +189,7 @@ impl Board {
                 }
             }
         }
-        pb.finish_with_message("Bookmarks collected!");
+        pb.finish();
 
         Ok(pins)
     }
@@ -236,8 +239,45 @@ impl Board {
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
+    let dir = Path::new("aesthetics");
+    if !dir.is_dir() { std::fs::create_dir(dir).unwrap(); }
+
     let url = "https://www.pinterest.com/DrunkenWarlock/%D1%8D%D1%81%D1%82%D0%B5%D1%82%D0%B8%D0%BA%D0%B0/";
     let client = Client::new();
-    let board = Board::from_url(client, url).await.unwrap();
+    let board = Board::from_url(client.clone(), url).await.unwrap();
     let pins = board.pins().await.unwrap();
+
+    let pb = ProgressBar::new(pins.len() as u64);
+    pb.set_style(
+        ProgressStyle::with_template("{prefix:>12.cyan.bold} [{bar:57}] {pos}/{len}")
+        .unwrap()
+        .progress_chars("=> "),
+    );
+    pb.set_prefix("Downloading pictures");
+
+    let handles = pins
+        .into_iter()
+        .map(|pin| {
+            let Pin { id, pic_url } = pin;
+            let client = client.clone();
+            let pb = pb.clone();
+            tokio::spawn(async move {
+                match client.get(&pic_url).send().await.and_then(|r| r.error_for_status()) {
+                    Ok(response) => {
+                        let [.., extension] = pic_url.as_str().split('.').collect::<Vec<_>>()[..] else {panic!("Couldn't find extension")};
+                        let mut path = dir.join(id);
+                        path.set_extension(extension);
+                        let content = response.bytes().await.unwrap();
+                        let mut file = tokio::fs::File::create(path).await.unwrap();
+                        file.write_all(&content).await.unwrap();
+                    },
+                    Err(_) => pb.println(format!("Could not download image from pin: {}", id)),
+                }
+                pb.inc(1);
+            })
+        })
+        .collect::<Vec<JoinHandle<()>>>();
+
+    futures::future::join_all(handles).await;
+    pb.finish();
 }
