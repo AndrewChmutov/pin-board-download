@@ -28,7 +28,7 @@ enum CreationError {
     BadUrl,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct BoardDescription {
     pub user: String,
     pub name: String,
@@ -56,6 +56,9 @@ impl BoardDescription {
 #[derive(Debug)]
 struct Board {
     client: Client,
+    name: String,
+    #[allow(dead_code)]
+    user: String,
     id: String,
     len: usize,
 }
@@ -75,10 +78,10 @@ struct PinResult {
 impl Board {
     async fn from_description(
         client: Client,
-        description: &BoardDescription,
+        description: BoardDescription,
     ) -> Result<Self, CreationError> {
         let into_api_error = |e| <reqwest::Error as Into<ApiError>>::into(e);
-        let board_url = Self::request_board_url(description);
+        let board_url = Self::request_board_url(&description);
 
         let response = client
             .get(board_url)
@@ -103,12 +106,13 @@ impl Board {
             .as_u64()
             .ok_or(ApiError::MissingField)? as usize;
 
-        Ok(Self { client, id, len })
+        let BoardDescription { name, user } = description;
+        Ok(Self { client, name, user, id, len })
     }
 
     async fn from_url(client: Client, url: &str) -> Result<Self, CreationError> {
         let description = BoardDescription::from_url(url).ok_or(CreationError::BadUrl)?;
-        Self::from_description(client, &description).await
+        Self::from_description(client, description).await
     }
 
     fn headers() -> reqwest::header::HeaderMap {
