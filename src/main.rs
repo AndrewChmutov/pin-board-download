@@ -273,11 +273,14 @@ struct Args {
     /// Directory where pictures should be stored
     #[arg(short, long)]
     dir: Option<PathBuf>,
+
+    #[arg(short, long, default_value_t = false)]
+    force: bool,
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
-    let Args { url, dir } = Args::parse();
+    let Args { url, dir, force } = Args::parse();
     let (mut dir, join_name) = match (dir, std::env::current_dir()) {
         (Some(dir), _) => (dir, false),
         (None, Ok(dir)) => (dir, true),
@@ -314,6 +317,17 @@ async fn main() {
             let pb = pb.clone();
             let dir = dir.clone();
             tokio::spawn(async move {
+                let [.., extension] = pic_url.as_str().split('.').collect::<Vec<_>>()[..] else {
+                    panic!("Couldn't find extension")
+                };
+
+                let mut path = dir.join(&id);
+                path.set_extension(extension);
+                if path.exists() && !force {
+                    pb.inc(1);
+                    return;
+                }
+
                 match client
                     .get(&pic_url)
                     .send()
@@ -321,12 +335,6 @@ async fn main() {
                     .and_then(|r| r.error_for_status())
                 {
                     Ok(response) => {
-                        let [.., extension] = pic_url.as_str().split('.').collect::<Vec<_>>()[..]
-                        else {
-                            panic!("Couldn't find extension")
-                        };
-                        let mut path = dir.join(id);
-                        path.set_extension(extension);
                         let content = response.bytes().await.unwrap();
                         let mut file = tokio::fs::File::create(path).await.unwrap();
                         file.write_all(&content).await.unwrap();
