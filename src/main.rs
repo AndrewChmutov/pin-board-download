@@ -107,7 +107,13 @@ impl Board {
             .ok_or(ApiError::MissingField)? as usize;
 
         let BoardDescription { name, user } = description;
-        Ok(Self { client, name, user, id, len })
+        Ok(Self {
+            client,
+            name,
+            user,
+            id,
+            len,
+        })
     }
 
     async fn from_url(client: Client, url: &str) -> Result<Self, CreationError> {
@@ -261,24 +267,36 @@ impl Board {
 #[derive(clap::Parser)]
 struct Args {
     /// Board URL
-    #[arg(short, long)]
+    #[arg()]
     url: String,
 
     /// Directory where pictures should be stored
     #[arg(short, long)]
-    dir: PathBuf,
+    dir: Option<PathBuf>,
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
     let Args { url, dir } = Args::parse();
-    if !dir.is_dir() {
-        std::fs::create_dir(&dir).unwrap();
-    }
+    let (mut dir, join_name) = match (dir, std::env::current_dir()) {
+        (Some(dir), _) => (dir, false),
+        (None, Ok(dir)) => (dir, true),
+        _ => {
+            eprintln!("Couldn't access current directory, please provide the directopy path");
+            return;
+        }
+    };
 
     let client = Client::new();
     let board = Board::from_url(client.clone(), &url).await.unwrap();
     let pins = board.pins().await.unwrap();
+
+    if join_name {
+        dir = dir.join(&board.name);
+    }
+    if !dir.is_dir() {
+        std::fs::create_dir(&dir).unwrap();
+    }
 
     let pb = ProgressBar::new(pins.len() as u64);
     pb.set_style(
