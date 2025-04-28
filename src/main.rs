@@ -45,8 +45,8 @@ impl BoardDescription {
     fn from_url(url: &str) -> Option<Self> {
         match url.split('/').collect::<Vec<_>>()[..] {
             [.., user, name, ""] | [.., user, name] => Some(Self {
-                user: decode_str(user).unwrap(),
-                name: decode_str(name).unwrap(),
+                user: decode_str(user)?,
+                name: decode_str(name)?,
             }),
             _ => None,
         }
@@ -92,16 +92,14 @@ impl Board {
 
         let id = response
             .pointer("/resource_response/data/id")
-            .ok_or(ApiError::MissingField)
-            .unwrap()
+            .ok_or(ApiError::MissingField)?
             .as_str()
             .ok_or(ApiError::MissingField)?
             .to_string();
 
         let len = response
             .pointer("/resource_response/data/pin_count")
-            .ok_or(ApiError::MissingField)
-            .unwrap()
+            .ok_or(ApiError::MissingField)?
             .as_u64()
             .ok_or(ApiError::MissingField)? as usize;
 
