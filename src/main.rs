@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::{header::HeaderMap, Client};
-use tokio::{io::AsyncWriteExt, task::JoinHandle};
+use std::sync::Arc;
+use tokio::{io::AsyncWriteExt, sync::Semaphore, task::JoinHandle};
 
 const ROOT: &str = "https://www.pinterest.com";
 const MAX_BOOKMARK_SIZE: usize = 26;
@@ -274,13 +275,23 @@ struct Args {
     #[arg(short, long)]
     dir: Option<PathBuf>,
 
+    /// Whether to overwrite existing files with the same name
     #[arg(short, long, default_value_t = false)]
     force: bool,
+
+    /// Maximum number of concurrent writes
+    #[arg(long, default_value_t = 200usize)]
+    max_concurrent_writes: usize,
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
-    let Args { url, dir, force } = Args::parse();
+    let Args {
+        url,
+        dir,
+        force,
+        max_concurrent_writes,
+    } = Args::parse();
     let (mut dir, join_name) = match (dir, std::env::current_dir()) {
         (Some(dir), _) => (dir, false),
         (None, Ok(dir)) => (dir, true),
@@ -291,6 +302,7 @@ async fn main() {
     };
 
     let client = Client::new();
+    let barrier = Arc::new(Semaphore::new(max_concurrent_writes));
     let board = Board::from_url(client.clone(), &url).await.unwrap();
     let pins = board.pins().await.unwrap();
 
@@ -316,6 +328,7 @@ async fn main() {
             let client = client.clone();
             let pb = pb.clone();
             let dir = dir.clone();
+            let barrier = barrier.clone();
             tokio::spawn(async move {
                 let [.., extension] = pic_url.as_str().split('.').collect::<Vec<_>>()[..] else {
                     panic!("Couldn't find extension")
@@ -335,6 +348,7 @@ async fn main() {
                     .and_then(|r| r.error_for_status())
                 {
                     Ok(response) => {
+                        _ = barrier.acquire().await.unwrap();
                         let content = response.bytes().await.unwrap();
                         let mut file = tokio::fs::File::create(path).await.unwrap();
                         file.write_all(&content).await.unwrap();
